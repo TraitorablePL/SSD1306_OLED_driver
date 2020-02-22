@@ -9,9 +9,10 @@
 #include "ssd1306.h"
 #include "ascii_font_6x8.h"
 #include "ascii_font_8x16.h"
-#include "../i2c/i2cmaster.h"
+#include "../i2c/i2c.h"
 
-#define SSD1306_ADDR  0x78
+//#define SSD1306_ADDR  0x78 //shifted
+#define SSD1306_ADDR  0x3C
 
 //display setup
 #define ROWS 8
@@ -21,101 +22,130 @@
 #define CMD 0x00
 #define DATA 0x40
 
-extern struct Cursor cursor;
+#define BUFF_SIZE 130 // Could be not enough
 
-void ssd1306_run_cmd(void){
+char TxDataBuffer[BUFF_SIZE];
+char RxDataBuffer[BUFF_SIZE];
+
+static struct Cursor cursorParams;
+static struct I2C_ActionParams actionParams = {};
 	
-	i2c_start_wait(SSD1306_ADDR+I2C_WRITE);
-	i2c_write(CMD);
+
+void ssd1306_cmd_mode(void){
+	while(i2c_eGetActionStatus() != I2C_Idle){};
+	actionParams.receiverAddr = SSD1306_ADDR;
+	actionParams.pTxDataBuffer[0] = CMD;
+	actionParams.txBufferLength = 1;
+	actionParams.rxBufferLength = 0;
+	actionParams.eCurrentAction = I2C_WriteAction;
 }
 
-void ssd1306_run_data(void){
+void ssd1306_data_mode(void){
+	while(i2c_eGetActionStatus() != I2C_Idle){};
+	actionParams.receiverAddr = SSD1306_ADDR;
+	actionParams.pTxDataBuffer[0] = DATA;
+	actionParams.txBufferLength = 1;
+	actionParams.rxBufferLength = 0;
+	actionParams.eCurrentAction = I2C_WriteAction;
+}
+
+uint8_t ssd1306_send_byte(const char cDataByte){
 	
-	i2c_start_wait(SSD1306_ADDR+I2C_WRITE);
-	i2c_write(DATA);
+	if (actionParams.txBufferLength != BUFF_SIZE){
+		actionParams.pTxDataBuffer[actionParams.txBufferLength] = cDataByte;
+		actionParams.txBufferLength++;
+		return 1;
+	}
+	else
+		return 0;
 }
 
 void ssd1306_init(){
 	
+	actionParams.pRxDataBuffer = (char*) calloc(BUFF_SIZE, sizeof(char)); //RxDataBuffer;
+	actionParams.pTxDataBuffer = (char*) calloc(BUFF_SIZE, sizeof(char)); 
+	
 	i2c_init();
-	ssd1306_run_cmd();
+	ssd1306_cmd_mode();
 	
 	//Set MUX ratio
-	i2c_write(0xA8); 
-	i2c_write(0x3F);
+	ssd1306_send_byte(0xA8); 
+	ssd1306_send_byte(0x3F);
 	
 	//Set display offset
-	i2c_write(0xD3); 
-	i2c_write(0x00);
+	ssd1306_send_byte(0xD3); 
+	ssd1306_send_byte(0x00);
 	
 	//Set display start line
-	i2c_write(0x40); 
+	ssd1306_send_byte(0x40); 
 	
 	//Set segment re-map or 0xA1
-	i2c_write(0xA1); 
+	ssd1306_send_byte(0xA1); 
 	
 	//Set COM output scan direction or 0xC8 //start from bottom or top
-	i2c_write(0xC8); 
+	ssd1306_send_byte(0xC8); 
 	
 	//Set COM pins hardware config
-	i2c_write(0xDA); 
-	i2c_write(0x10);
+	ssd1306_send_byte(0xDA); 
+	ssd1306_send_byte(0x10);
 	
 	//Set contrast control
-	i2c_write(0x81); 
-	i2c_write(0xFF);
+	ssd1306_send_byte(0x81); 
+	ssd1306_send_byte(0xFF);
 	
 	//Disable entire display on
-	i2c_write(0xA4); 
+	ssd1306_send_byte(0xA4); 
 	
 	//Set normal display
-	i2c_write(0xA6); 
+	ssd1306_send_byte(0xA6); 
 	
 	//Set oscillator frequency
-	i2c_write(0xD5); 
-	i2c_write(0x80);
+	ssd1306_send_byte(0xD5); 
+	ssd1306_send_byte(0x80);
 	
 	//Enable charge pump regulator
-	i2c_write(0x8D); 
-	i2c_write(0x14);
+	ssd1306_send_byte(0x8D); 
+	ssd1306_send_byte(0x14);
 	
 	//Set memory addressing mode to horizontal
-	i2c_write(0x20);
-	i2c_write(0x10);	//page
-	//i2c_write(0x00);	//horizontal
+	ssd1306_send_byte(0x20);
+	ssd1306_send_byte(0x10);		//page
+	//ssd1306_send_byte(0x00);		//horizontal
 	
 	//Set start and end column address
-	i2c_write(0x21);
-	i2c_write(0x00); //start
-	i2c_write(0x7F); //end
+	ssd1306_send_byte(0x21);
+	ssd1306_send_byte(0x00);		//start
+	ssd1306_send_byte(0x7F);		//end
 	
 	//Set start and end page address
-	i2c_write(0x22);
-	i2c_write(0x00); //start
-	i2c_write(0x07); //end
+	ssd1306_send_byte(0x22);
+	ssd1306_send_byte(0x00);		//start
+	ssd1306_send_byte(0x07);		//end
 	
 	//Display on
-	i2c_write(0xAF); 
+	ssd1306_send_byte(0xAF); 
 	
-	i2c_stop();
+	i2c_proceedToAction(actionParams);
 }
 
 void ssd1306_set_page(const uint8_t page){
+	
 	if(page<8){
-		cursor.posY = page;
-		ssd1306_run_cmd();
-		i2c_write( 0xB0 | (page & 0x07));
-		i2c_stop();
+		cursorParams.posY = page;
+		ssd1306_cmd_mode();
+		ssd1306_send_byte( 0xB0 | (page & 0x07));
+		i2c_proceedToAction(actionParams);
 	}
 }
 
 void ssd1306_set_col(const uint8_t col){
+	
 	if(col<128){
-		cursor.posX = col;
-		ssd1306_run_cmd();
-		i2c_write(col & 0x0F);
-		i2c_write((col>>4 & 0x07) | 0x10);
-		i2c_stop();
+		cursorParams.posX = col;
+		ssd1306_cmd_mode();
+		ssd1306_send_byte(col & 0x0F);
+		ssd1306_send_byte((col>>4 & 0x07) | 0x10);
+		i2c_proceedToAction(actionParams);
 	}
 }
 
@@ -150,20 +180,21 @@ if(asciiSign >= ' ' || asciiSign <= 'z'){
 */
 
 void draw_sign6x8(const int8_t asciiSign){
+	
 	if(asciiSign >= ' ' || asciiSign <= 'z'){
 		
 		uint16_t charIndex = (asciiSign - ' ')*6;
 		uint8_t i;
 		
-		ssd1306_goto(cursor.posX,cursor.posY);
-		ssd1306_run_data();
+		ssd1306_goto(cursorParams.posX,cursorParams.posY);
+		ssd1306_data_mode();
 	
 		for(i = 0; i < 6; i++){
-			i2c_write(pgm_read_byte(&ascii_font6x8[charIndex+i]));
-			cursor.posX++;
-			cursor.posX %= 128;
+			ssd1306_send_byte(pgm_read_byte(&ascii_font6x8[charIndex+i]));
+			cursorParams.posX++;
+			cursorParams.posX %= 128;
 		}
-		i2c_stop();
+		i2c_proceedToAction(actionParams);
 	}
 }
 
@@ -177,7 +208,7 @@ void draw_text6x8(const char* text, bool alignCenter){
 		
 	if(alignCenter){
 		startPosX = 61 - ((textSize)*6)/2;
-		ssd1306_goto(startPosX, cursor.posY);
+		ssd1306_goto(startPosX, cursorParams.posY);
 	}
 	
 	for (uint8_t i = 0; i<textSize; i++){
@@ -186,27 +217,28 @@ void draw_text6x8(const char* text, bool alignCenter){
 }
 
 void draw_sign8x16(const int8_t asciiSign){
+	
 	if(asciiSign >= ' ' || asciiSign <= 'z'){
 		
 		uint16_t charIndex = (asciiSign - ' ')*16;
-		uint8_t startPosX = cursor.posX;
+		uint8_t startPosX = cursorParams.posX;
 		uint8_t i;
 		
 		for (i = 0; i < 2; i++){
 			
 			uint8_t j;
 		
-			ssd1306_goto(startPosX,cursor.posY+i);
-			ssd1306_run_data();
+			ssd1306_goto(startPosX,cursorParams.posY+i);
+			ssd1306_data_mode();
 		
 			for(j = 0; j < 8; j++){
-				i2c_write(pgm_read_byte(&ascii_font8x16[charIndex+j+(8*i)]));
-				cursor.posX++;
-				cursor.posX %= 128;
+				ssd1306_send_byte(pgm_read_byte(&ascii_font8x16[charIndex+j+(8*i)]));
+				cursorParams.posX++;
+				cursorParams.posX %= 128;
 			}
-			i2c_stop();
+			i2c_proceedToAction(actionParams);
 		}
-		ssd1306_set_page(cursor.posY-1);
+		ssd1306_set_page(cursorParams.posY-1);
 	}
 }
 
@@ -221,7 +253,7 @@ void draw_text8x16(const char* text, bool alignCenter){
 	
 	if(alignCenter){
 		startPosX = 64 - ((textSize)*8)/2;
-		ssd1306_goto(startPosX, cursor.posY);
+		ssd1306_goto(startPosX, cursorParams.posY);
 	}
 	
 	for (uint8_t i = 0; i<textSize; i++){
@@ -229,19 +261,23 @@ void draw_text8x16(const char* text, bool alignCenter){
 	}
 }
 
+//With current solution sending 128 bytes in one transmission 
+//requires space in memory for buffering those 128 bytes
+
+//Buffer could be shrinked by reworking function below 
+//and dividing 8 by 128 byte segments into 32 by 32
+
 void ssd1306_clr_scrn(void){
 	
 	uint8_t i, j;
 	
-	
 	for (i = 0; i<8; i++)
 	{
 		ssd1306_goto(0,i);
-		ssd1306_run_data();
+		ssd1306_data_mode();
 		for (j = 0; j < 128; j++){
-			i2c_write(0x00);
+			ssd1306_send_byte(0x00);
 		}
 	}
-	
-	i2c_stop();
+	i2c_proceedToAction(actionParams);
 }

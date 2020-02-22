@@ -30,5 +30,8 @@ void draw_sign6x8(const int8_t asciiSign);
 void draw_text8x16(const char* text, bool alignCenter);
 void draw_sign8x16(const int8_t asciiSign);
 
+// TO ADD
+//getCursorX
+//getCursorY
 
 #endif /* SSD1306_H_ */
